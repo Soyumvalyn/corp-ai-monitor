@@ -1,1 +1,1 @@
-worker: python corp_ai_final.py
+worker: python corp_ai_max.py
