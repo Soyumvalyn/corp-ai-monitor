@@ -186,7 +186,7 @@ LINKEDIN_POST: [3-4 sentences of sharp professional insight for tech leaders and
                 "anthropic-version": "2023-06-01"
             },
             json={
-                "model": "claude-sonnet-4-20250514",
+                "model": "claude-opus-4-5",
                 "max_tokens": 600,
                 "messages": [{"role": "user", "content": prompt}]
             },
