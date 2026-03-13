@@ -2,8 +2,8 @@ import feedparser
 import requests
 import time
 import os
-import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import email.utils
 
 # ============================================================
 # CONFIGURATION
@@ -13,17 +13,15 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID")
 ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY")
 # ============================================================
 
-CHECK_INTERVAL = 1800  # 30 minutes
+CHECK_INTERVAL = 1800       # 30 minutes
+MAX_ARTICLE_AGE_HOURS = 6   # Only show articles from last 6 hours
 
 # ============================================================
 # GLOBAL CORPORATE NEWS SOURCES
-# Covers USA, Europe, Asia, India, Middle East, Africa
 # ============================================================
 CORPORATE_SOURCES = [
-    # USA
     {"name": "Reuters Business",     "url": "https://feeds.reuters.com/reuters/businessNews"},
     {"name": "WSJ Business",         "url": "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml"},
-    {"name": "Bloomberg Markets",    "url": "https://feeds.bloomberg.com/markets/news.rss"},
     {"name": "Forbes Business",      "url": "https://www.forbes.com/business/feed/"},
     {"name": "Business Insider",     "url": "https://feeds.businessinsider.com/custom/all"},
     {"name": "TechCrunch",           "url": "https://techcrunch.com/feed/"},
@@ -31,113 +29,78 @@ CORPORATE_SOURCES = [
     {"name": "Layoffs FYI",          "url": "https://layoffs.fyi/feed/"},
     {"name": "CNBC Business",        "url": "https://www.cnbc.com/id/10001147/device/rss/rss.html"},
     {"name": "Fortune",              "url": "https://fortune.com/feed/"},
-    {"name": "Fast Company",         "url": "https://www.fastcompany.com/rss"},
-    {"name": "Inc Magazine",         "url": "https://www.inc.com/rss"},
-    {"name": "Harvard Biz Review",   "url": "https://hbr.org/feed"},
-    # EUROPE
     {"name": "Financial Times",      "url": "https://www.ft.com/rss/home"},
-    {"name": "The Economist",        "url": "https://www.economist.com/business/rss.xml"},
-    {"name": "Guardian Business",    "url": "https://www.theguardian.com/uk/business/rss"},
     {"name": "BBC Business",         "url": "http://feeds.bbci.co.uk/news/business/rss.xml"},
-    {"name": "Deutsche Welle Biz",   "url": "https://rss.dw.com/rdf/rss-en-bus"},
-    {"name": "Euronews Business",    "url": "https://www.euronews.com/rss?level=theme&name=business"},
-    # ASIA
+    {"name": "Guardian Business",    "url": "https://www.theguardian.com/uk/business/rss"},
     {"name": "Nikkei Asia",          "url": "https://asia.nikkei.com/rss/feed/nar"},
-    {"name": "South China Morning",  "url": "https://www.scmp.com/rss/92/feed"},
-    {"name": "Asia Times Business",  "url": "https://asiatimes.com/category/business/feed/"},
-    # INDIA
     {"name": "Economic Times",       "url": "https://economictimes.indiatimes.com/rssfeedstopstories.cms"},
     {"name": "Moneycontrol",         "url": "https://www.moneycontrol.com/rss/business.xml"},
     {"name": "Business Standard",    "url": "https://www.business-standard.com/rss/home_page_top_stories.rss"},
     {"name": "Livemint",             "url": "https://www.livemint.com/rss/news"},
-    {"name": "Hindu Business",       "url": "https://www.thehindubusinessline.com/feeder/default.rss"},
     {"name": "Inc42 India",          "url": "https://inc42.com/feed/"},
-    {"name": "YourStory",            "url": "https://yourstory.com/feed"},
-    # MIDDLE EAST
     {"name": "Arabian Business",     "url": "https://www.arabianbusiness.com/rss"},
     {"name": "Gulf News Business",   "url": "https://gulfnews.com/rss/business"},
-    # AFRICA
-    {"name": "Business Day Africa",  "url": "https://businessday.ng/feed/"},
-    {"name": "African Business",     "url": "https://african.business/feed"},
-    # LATAM
-    {"name": "Latin Finance",        "url": "https://latinfinance.com/feed/"},
+    {"name": "South China Morning",  "url": "https://www.scmp.com/rss/92/feed"},
 ]
 
 # ============================================================
-# GLOBAL AI NEWS SOURCES
+# AI NEWS SOURCES
 # ============================================================
 AI_SOURCES = [
     {"name": "OpenAI Blog",          "url": "https://openai.com/blog/rss.xml"},
     {"name": "Anthropic Blog",       "url": "https://www.anthropic.com/rss.xml"},
-    {"name": "Google AI Blog",       "url": "https://blog.research.google/atom.xml"},
+    {"name": "Google DeepMind",      "url": "https://deepmind.google/blog/rss.xml"},
     {"name": "Meta AI Blog",         "url": "https://ai.meta.com/blog/rss/"},
-    {"name": "Microsoft AI Blog",    "url": "https://blogs.microsoft.com/ai/feed/"},
-    {"name": "MIT Tech Review AI",   "url": "https://www.technologyreview.com/feed/"},
+    {"name": "Microsoft AI",         "url": "https://blogs.microsoft.com/ai/feed/"},
+    {"name": "MIT Tech Review",      "url": "https://www.technologyreview.com/feed/"},
     {"name": "The Verge AI",         "url": "https://www.theverge.com/ai-artificial-intelligence/rss/index.xml"},
     {"name": "Wired AI",             "url": "https://www.wired.com/feed/tag/artificial-intelligence/rss"},
     {"name": "VentureBeat AI",       "url": "https://venturebeat.com/category/ai/feed/"},
-    {"name": "ArXiv AI",             "url": "https://arxiv.org/rss/cs.AI"},
     {"name": "Hugging Face Blog",    "url": "https://huggingface.co/blog/feed.xml"},
-    {"name": "DeepMind Blog",        "url": "https://deepmind.google/blog/rss.xml"},
-    {"name": "AI News",              "url": "https://artificialintelligence-news.com/feed/"},
-    {"name": "Synced AI",            "url": "https://syncedreview.com/feed/"},
-    {"name": "ImportAI",             "url": "https://importai.substack.com/feed"},
     {"name": "NVIDIA Blog",          "url": "https://blogs.nvidia.com/feed/"},
+    {"name": "TechCrunch AI",        "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
 ]
 
 # ============================================================
-# CORPORATE KEYWORDS — what to flag
+# KEYWORDS
 # ============================================================
 CORPORATE_KEYWORDS = [
-    # Layoffs
     "layoff", "layoffs", "laid off", "job cuts", "retrenchment",
-    "redundancies", "workforce reduction", "downsizing", "firing",
-    # Hiring
-    "hiring", "recruitment", "new jobs", "expanding workforce",
-    "headcount", "talent acquisition",
-    # Deals
+    "hiring", "recruitment", "new jobs",
     "acquisition", "merger", "acquires", "buys", "takeover",
-    "partnership", "joint venture", "deal worth", "billion deal",
-    # Performance
+    "partnership", "joint venture", "deal worth",
     "earnings", "revenue", "profit", "loss", "quarterly results",
-    "beats estimates", "misses estimates", "guidance", "forecast",
-    # Leadership
+    "beats estimates", "misses estimates",
     "ceo", "cfo", "cto", "resigns", "appointed", "steps down",
-    "new chief", "leadership change", "board",
-    # Debt & Finance
-    "debt", "bankruptcy", "chapter 11", "loan", "bond", "credit rating",
-    "downgrade", "default", "fundraising", "ipo", "valuation",
-    # Growth
-    "expansion", "new market", "launches in", "opens office",
-    "new product", "revenue growth", "market share",
-    # Tech
-    "patent", "innovation", "new technology", "ai adoption",
-    "digital transformation", "cloud", "automation",
+    "bankruptcy", "chapter 11", "credit rating", "downgrade",
+    "ipo", "valuation", "fundraising", "raises",
+    "expansion", "new market", "launches",
 ]
 
-# ============================================================
-# AI KEYWORDS — what to flag
-# ============================================================
 AI_KEYWORDS = [
     "gpt", "claude", "gemini", "llm", "large language model",
-    "artificial intelligence", "machine learning", "deep learning",
-    "ai model", "new model", "benchmark", "beats", "surpasses",
-    "openai", "anthropic", "google deepmind", "meta ai", "mistral",
-    "funding", "raises", "valuation", "billion", "investment",
-    "regulation", "ban", "law", "policy", "safety",
-    "open source", "release", "launch", "available",
-    "nvidia", "gpu", "chip", "semiconductor",
-    "agent", "autonomous", "robotics", "humanoid",
-    "copyright", "lawsuit", "legal",
-    "agi", "superintelligence", "alignment",
+    "artificial intelligence", "machine learning",
+    "ai model", "new model", "benchmark",
+    "openai", "anthropic", "deepmind", "meta ai", "mistral",
+    "funding", "raises", "billion",
+    "regulation", "ban", "law", "safety",
+    "open source", "release", "launch",
+    "nvidia", "gpu", "chip",
+    "agent", "autonomous", "robotics",
+    "agi", "superintelligence",
 ]
 
-# Track already seen articles
+# Track seen articles
 seen_articles = set()
 
 def send_telegram(message):
-    """Send message to Telegram"""
+    """Send message to Telegram — split if too long"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    # Telegram max is 4096 chars
+    if len(message) > 4000:
+        message = message[:4000] + "...\n\n[Message truncated]"
+
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
@@ -146,47 +109,73 @@ def send_telegram(message):
     }
     try:
         r = requests.post(url, json=payload, timeout=10)
-        if r.status_code == 200:
-            return True
-        else:
-            print(f"Telegram error: {r.status_code} {r.text}")
-            return False
+        return r.status_code == 200
     except Exception as e:
         print(f"Telegram error: {e}")
         return False
 
-def analyze_with_claude(headline, source, category):
-    """Use Claude to analyze the news and generate ready-to-post content"""
+def get_article_age_hours(entry):
+    """Get article age in hours — returns 999 if can't parse"""
+    try:
+        # Try published_parsed first
+        if hasattr(entry, 'published_parsed') and entry.published_parsed:
+            pub_time = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - pub_time).total_seconds() / 3600
+            return age
+
+        # Try published string
+        if hasattr(entry, 'published') and entry.published:
+            pub_time = email.utils.parsedate_to_datetime(entry.published)
+            if pub_time.tzinfo is None:
+                pub_time = pub_time.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - pub_time).total_seconds() / 3600
+            return age
+
+        # Try updated
+        if hasattr(entry, 'updated_parsed') and entry.updated_parsed:
+            pub_time = datetime(*entry.updated_parsed[:6], tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - pub_time).total_seconds() / 3600
+            return age
+
+    except Exception as e:
+        print(f"Date parse error: {e}")
+
+    return 999  # Unknown age — skip it
+
+def analyze_with_claude(headline, source, url, category):
+    """Use Claude to analyze and generate ready-to-post content"""
     if not ANTHROPIC_API_KEY:
         return None
 
     if category == "CORPORATE":
-        prompt = f"""You are a sharp corporate intelligence analyst. Analyze this news headline and provide:
+        prompt = f"""You are a sharp corporate intelligence analyst writing for a finance and business audience on X (Twitter) and LinkedIn.
 
+Analyze this news:
 Headline: {headline}
 Source: {source}
 
-Respond in this EXACT format with no extra text:
+Give me EXACTLY this format — no extra text, no preamble:
 
-MARKET_IMPACT: [2 sentences on market/business impact]
-HIDDEN_ANGLE: [1 sentence on what most people are missing]
-JOBS_IMPACT: [1 sentence on hiring/layoff implications]
-X_POST: [viral tweet under 260 chars that connects this to a bigger pattern, no hashtags]
-LINKEDIN_POST: [3-4 sentences professional insight suitable for LinkedIn executives]"""
+MARKET_IMPACT: [2 sharp sentences on business/market impact]
+JOBS_IMPACT: [1 sentence on hiring or layoff implications]  
+HIDDEN_ANGLE: [1 sentence on what most analysts are missing]
+X_POST: [A punchy viral tweet under 260 chars. No hashtags. Connect to a bigger pattern. Make people stop scrolling.]
+LINKEDIN_POST: [3-4 sentences of sharp professional insight. Suitable for executives and investors. No fluff.]"""
 
-    else:  # AI
-        prompt = f"""You are a sharp AI industry analyst. Analyze this AI news headline and provide:
+    else:
+        prompt = f"""You are a sharp AI industry analyst writing for a tech and finance audience on X (Twitter) and LinkedIn.
 
+Analyze this AI news:
 Headline: {headline}
 Source: {source}
 
-Respond in this EXACT format with no extra text:
+Give me EXACTLY this format — no extra text, no preamble:
 
-MARKET_IMPACT: [2 sentences on which companies/stocks are affected]
-HIDDEN_ANGLE: [1 sentence on what most people are missing about this]
+MARKET_IMPACT: [2 sharp sentences on which companies or stocks are affected]
 INDUSTRY_SHIFT: [1 sentence on what this means for the AI industry long term]
-X_POST: [viral tweet under 260 chars connecting this to the bigger AI race, no hashtags]
-LINKEDIN_POST: [3-4 sentences professional insight suitable for LinkedIn tech leaders]"""
+HIDDEN_ANGLE: [1 sentence on what most people are missing about this]
+X_POST: [A punchy viral tweet under 260 chars. No hashtags. Connect to the bigger AI race. Make people stop scrolling.]
+LINKEDIN_POST: [3-4 sentences of sharp professional insight for tech leaders and investors. No fluff.]"""
 
     try:
         response = requests.post(
@@ -198,7 +187,7 @@ LINKEDIN_POST: [3-4 sentences professional insight suitable for LinkedIn tech le
             },
             json={
                 "model": "claude-sonnet-4-20250514",
-                "max_tokens": 500,
+                "max_tokens": 600,
                 "messages": [{"role": "user", "content": prompt}]
             },
             timeout=30
@@ -206,196 +195,167 @@ LINKEDIN_POST: [3-4 sentences professional insight suitable for LinkedIn tech le
         if response.status_code == 200:
             data = response.json()
             return data["content"][0]["text"]
-        return None
+        else:
+            print(f"Claude API error: {response.status_code}")
+            return None
     except Exception as e:
-        print(f"Claude API error: {e}")
+        print(f"Claude error: {e}")
         return None
 
-def parse_claude_response(text, category):
-    """Parse Claude's structured response"""
+def parse_analysis(text):
+    """Parse Claude's structured response into dict"""
     if not text:
         return {}
-
     result = {}
-    lines = text.strip().split("\n")
-
-    for line in lines:
+    for line in text.strip().split("\n"):
         if ":" in line:
             key, _, value = line.partition(":")
-            result[key.strip()] = value.strip()
-
+            key = key.strip()
+            value = value.strip()
+            if key and value:
+                result[key] = value
     return result
 
-def format_corporate_alert(headline, source, url, analysis):
-    """Format corporate alert message"""
+def format_alert(headline, source, url, analysis, category, age_hours):
+    """Format the complete Telegram alert"""
     now = datetime.now(timezone.utc).strftime("%d %b %Y  %H:%M UTC")
 
-    msg = f"""🏢 *CORPORATE MONITOR ALERT*
+    if age_hours < 1:
+        age_str = f"{int(age_hours * 60)} mins ago"
+    else:
+        age_str = f"{age_hours:.1f} hrs ago"
+
+    if category == "CORPORATE":
+        header = "🏢 *CORPORATE MONITOR*"
+    else:
+        header = "🤖 *AI MONITOR*"
+
+    msg = f"""{header}
 ━━━━━━━━━━━━━━━━━━━━
-🕐 {now}
-📰 *{headline[:200]}*
-📡 Source: {source}
+🕐 {now} _(published {age_str})_
+📰 *{headline[:180]}*
+📡 _{source}_
 
 """
     if analysis:
         if "MARKET_IMPACT" in analysis:
-            msg += f"📈 *MARKET IMPACT:*\n{analysis.get('MARKET_IMPACT', '')}\n\n"
+            msg += f"📈 *MARKET IMPACT:*\n{analysis['MARKET_IMPACT']}\n\n"
+
         if "JOBS_IMPACT" in analysis:
-            msg += f"💼 *JOBS IMPACT:*\n{analysis.get('JOBS_IMPACT', '')}\n\n"
-        if "HIDDEN_ANGLE" in analysis:
-            msg += f"🔍 *HIDDEN ANGLE:*\n{analysis.get('HIDDEN_ANGLE', '')}\n\n"
-        if "X_POST" in analysis:
-            msg += f"🐦 *POST ON X:*\n_{analysis.get('X_POST', '')}_\n\n"
-        if "LINKEDIN_POST" in analysis:
-            msg += f"💼 *POST ON LINKEDIN:*\n_{analysis.get('LINKEDIN_POST', '')}_\n\n"
+            msg += f"💼 *JOBS IMPACT:*\n{analysis['JOBS_IMPACT']}\n\n"
 
-    msg += f"🔗 [Read Full Story]({url})"
-    return msg
-
-def format_ai_alert(headline, source, url, analysis):
-    """Format AI monitor alert message"""
-    now = datetime.now(timezone.utc).strftime("%d %b %Y  %H:%M UTC")
-
-    msg = f"""🤖 *AI MONITOR ALERT*
-━━━━━━━━━━━━━━━━━━━━
-🕐 {now}
-📰 *{headline[:200]}*
-📡 Source: {source}
-
-"""
-    if analysis:
-        if "MARKET_IMPACT" in analysis:
-            msg += f"📈 *MARKET IMPACT:*\n{analysis.get('MARKET_IMPACT', '')}\n\n"
         if "INDUSTRY_SHIFT" in analysis:
-            msg += f"🔄 *INDUSTRY SHIFT:*\n{analysis.get('INDUSTRY_SHIFT', '')}\n\n"
-        if "HIDDEN_ANGLE" in analysis:
-            msg += f"🔍 *HIDDEN ANGLE:*\n{analysis.get('HIDDEN_ANGLE', '')}\n\n"
-        if "X_POST" in analysis:
-            msg += f"🐦 *POST ON X:*\n_{analysis.get('X_POST', '')}_\n\n"
-        if "LINKEDIN_POST" in analysis:
-            msg += f"💼 *POST ON LINKEDIN:*\n_{analysis.get('LINKEDIN_POST', '')}_\n\n"
+            msg += f"🔄 *INDUSTRY SHIFT:*\n{analysis['INDUSTRY_SHIFT']}\n\n"
 
-    msg += f"🔗 [Read Full Story]({url})"
+        if "HIDDEN_ANGLE" in analysis:
+            msg += f"🔍 *HIDDEN ANGLE:*\n{analysis['HIDDEN_ANGLE']}\n\n"
+
+        if "X_POST" in analysis:
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n🐦 *COPY & POST ON X:*\n\n{analysis['X_POST']}\n\n"
+
+        if "LINKEDIN_POST" in analysis:
+            msg += f"━━━━━━━━━━━━━━━━━━━━\n💼 *COPY & POST ON LINKEDIN:*\n\n{analysis['LINKEDIN_POST']}\n\n"
+    else:
+        msg += "_Analysis unavailable — check Anthropic API key_\n\n"
+
+    msg += f"━━━━━━━━━━━━━━━━━━━━\n🔗 [Read Full Story]({url})"
     return msg
 
 def is_relevant(title, keywords):
-    """Check if headline matches our keywords"""
     title_lower = title.lower()
-    return any(keyword.lower() in title_lower for keyword in keywords)
-
-def get_article_id(title, link):
-    """Generate unique ID for article"""
-    return str(hash(title[:50] + link[:50]))
+    return any(kw.lower() in title_lower for kw in keywords)
 
 def scan_sources(sources, keywords, category):
-    """Scan RSS sources and send alerts"""
     alerts_sent = 0
 
     for source in sources:
         try:
             feed = feedparser.parse(source["url"])
-            entries = feed.entries[:10]  # check latest 10 per source
+            entries = feed.entries[:15]
 
             for entry in entries:
-                title = entry.get("title", "")
-                link  = entry.get("link", "")
+                title = entry.get("title", "").strip()
+                link  = entry.get("link", "").strip()
 
                 if not title or not link:
                     continue
 
-                # Skip if already seen
-                article_id = get_article_id(title, link)
+                # Skip seen articles
+                article_id = str(hash(title[:60]))
                 if article_id in seen_articles:
                     continue
 
-                # Check if relevant
-                if not is_relevant(title, keywords):
-                    seen_articles.add(article_id)
+                seen_articles.add(article_id)
+
+                # Check article age — ONLY last 6 hours
+                age_hours = get_article_age_hours(entry)
+                if age_hours > MAX_ARTICLE_AGE_HOURS:
                     continue
 
-                print(f"[{category}] Relevant: {title[:80]}...")
+                # Check relevance
+                if not is_relevant(title, keywords):
+                    continue
 
-                # Analyze with Claude
-                raw_analysis = analyze_with_claude(title, source["name"], category)
-                analysis = parse_claude_response(raw_analysis, category)
+                print(f"[{category}] ✅ Fresh article ({age_hours:.1f}h): {title[:70]}")
+
+                # Get Claude analysis
+                raw = analyze_with_claude(title, source["name"], link, category)
+                analysis = parse_analysis(raw)
 
                 # Format and send
-                if category == "CORPORATE":
-                    message = format_corporate_alert(title, source["name"], link, analysis)
-                else:
-                    message = format_ai_alert(title, source["name"], link, analysis)
+                message = format_alert(title, source["name"], link, analysis, category, age_hours)
 
                 if send_telegram(message):
                     alerts_sent += 1
-                    print(f"Alert sent for: {title[:60]}")
-                    time.sleep(5)  # avoid spam
-
-                seen_articles.add(article_id)
-
-                # Keep seen set manageable
-                if len(seen_articles) > 5000:
-                    seen_articles.clear()
+                    print(f"Alert sent!")
+                    time.sleep(5)
 
         except Exception as e:
             print(f"Error scanning {source['name']}: {e}")
             continue
 
+        # Keep seen set manageable
+        if len(seen_articles) > 5000:
+            seen_articles.clear()
+
     return alerts_sent
 
 def main():
     print("=" * 60)
-    print("Corporate + AI Monitor Bot Started")
-    print(f"Corporate sources: {len(CORPORATE_SOURCES)}")
-    print(f"AI sources: {len(AI_SOURCES)}")
-    print(f"Checking every {CHECK_INTERVAL//60} minutes")
+    print("Corporate + AI Monitor Bot v2 Started")
+    print(f"Only showing articles from last {MAX_ARTICLE_AGE_HOURS} hours")
+    print(f"Checking every {CHECK_INTERVAL // 60} minutes")
     print("=" * 60)
 
-    send_telegram(f"""🚀 *Corporate + AI Monitor Bot ONLINE*
+    send_telegram(f"""🚀 *Corporate + AI Monitor Bot v2 ONLINE*
 ━━━━━━━━━━━━━━━━━━━━
+✅ Fixed: Only fresh news (last 6 hours)
+✅ Fixed: Full AI analysis on every alert
+✅ Fixed: Ready-to-post X and LinkedIn content
+
 *Tracking globally every 30 minutes:*
+🏢 {len(CORPORATE_SOURCES)} corporate sources worldwide
+🤖 {len(AI_SOURCES)} AI sources worldwide
 
-🏢 *CORPORATE MONITOR*
-✅ {len(CORPORATE_SOURCES)} global sources
-✅ USA, Europe, Asia, India, Middle East, Africa
-✅ Layoffs, Hiring, Deals, Earnings
-✅ Leadership changes, Debt, IPOs
-✅ Ready-to-post X + LinkedIn content
-
-🤖 *AI MONITOR*
-✅ {len(AI_SOURCES)} AI sources
-✅ New models, Funding, Research
-✅ Regulation, Open source releases
-✅ Chip & GPU news
-✅ Ready-to-post X + LinkedIn content
+*Every alert now includes:*
+📈 Market impact
+💼 Jobs impact  
+🔍 Hidden angle
+🐦 Copy-paste ready X post
+💼 Copy-paste ready LinkedIn post
 
 ━━━━━━━━━━━━━━━━━━━━
-Every alert includes:
-📈 Market impact analysis
-🔍 Hidden angle others miss
-🐦 Ready viral X post
-💼 Ready LinkedIn post
-🔗 Full story link
-
 ⚡ _Your unfair advantage starts now_""")
 
     while True:
-        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Starting scan...")
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Scanning...")
 
-        # Scan corporate sources
-        print("Scanning corporate sources...")
         corp_alerts = scan_sources(CORPORATE_SOURCES, CORPORATE_KEYWORDS, "CORPORATE")
-        print(f"Corporate alerts sent: {corp_alerts}")
-
-        # Small gap between scans
         time.sleep(10)
-
-        # Scan AI sources
-        print("Scanning AI sources...")
         ai_alerts = scan_sources(AI_SOURCES, AI_KEYWORDS, "AI")
-        print(f"AI alerts sent: {ai_alerts}")
 
-        print(f"Scan complete. Total alerts: {corp_alerts + ai_alerts}")
-        print(f"Sleeping {CHECK_INTERVAL//60} minutes until next scan...")
+        total = corp_alerts + ai_alerts
+        print(f"Scan done. {total} alerts sent. Sleeping {CHECK_INTERVAL // 60} mins...")
 
         time.sleep(CHECK_INTERVAL)
 
