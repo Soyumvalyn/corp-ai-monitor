@@ -13,8 +13,8 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID")
 ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY")
 # ============================================================
 
-CHECK_INTERVAL = 1800       # 30 minutes
-MAX_ARTICLE_AGE_HOURS = 6   # Only show articles from last 6 hours
+CHECK_INTERVAL = 600       # 10 minutes
+MAX_ARTICLE_AGE_HOURS = 12   # Only show articles from last 12 hours
 
 # ============================================================
 # GLOBAL CORPORATE NEWS SOURCES
@@ -186,7 +186,7 @@ LINKEDIN_POST: [3-4 sentences of sharp professional insight for tech leaders and
                 "anthropic-version": "2023-06-01"
             },
             json={
-                "model": "claude-opus-4-5",
+                "model": "claude-haiku-4-5-20251001",
                 "max_tokens": 600,
                 "messages": [{"role": "user", "content": prompt}]
             },
